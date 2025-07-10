@@ -97,79 +97,17 @@ def download_linkedin_image(url: str) -> bytes:
     except requests.exceptions.RequestException as e:
         raise Exception(f"Failed to download image: {str(e)}")
 
-@app.route('/process-linkedin-image', methods=['POST'])
-def process_linkedin_image():
-    """Main endpoint to process LinkedIn images"""
-    try:
-        data = request.get_json()
-        
-        if not data or 'image_url' not in data:
-            return jsonify({
-                'success': False,
-                'error': 'Missing image_url in request body'
-            }), 400
-        
-        linkedin_url = data['image_url']
-        custom_filename = data.get('filename', '')
-        
-        # Download the image
-        image_data = download_linkedin_image(linkedin_url)
-        
-        # Get original dimensions
-        original_img = Image.open(BytesIO(image_data))
-        original_size = original_img.size
-        
-        # Process the image
-        processed_data, new_width, new_height = process_image(image_data)
-        
-        # Generate filename
-        if custom_filename:
-            safe_filename = "".join(c for c in custom_filename if c.isalnum() or c in (' ', '-', '_')).rstrip()
-            filename = f"{safe_filename.replace(' ', '_')}.jpg"
-        else:
-            url_hash = hashlib.md5(linkedin_url.encode()).hexdigest()[:12]
-            filename = f"linkedin_{url_hash}.jpg"
-        
-        # Save processed image
-        file_path = os.path.join(UPLOAD_FOLDER, filename)
-        with open(file_path, 'wb') as f:
-            f.write(processed_data)
-        
-        # Get file size
-        file_size = os.path.getsize(file_path)
-        
-        # Build public URL
-        public_url = f"{BASE_URL}/images/{filename}"
-        
-        return jsonify({
-            'success': True,
-            'processed_url': public_url,
-            'local_path': file_path,
-            'original_size': original_size,
-            'processed_size': [new_width, new_height],
-            'file_size': file_size,
-            'filename': filename
-        })
-        
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
-@app.route('/images/<filename>')
-def serve_image(filename):
-    """Serve processed images"""
-    try:
-        file_path = os.path.join(UPLOAD_FOLDER, filename)
-        if os.path.exists(file_path):
-            return send_file(file_path, as_attachment=False)
-        else:
-            return jsonify({'error': 'Image not found'}), 404
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/health')
-def health_check():
-    """Health check endpoint"""
-    return j
+@app.route('/')
+def home():
+    """Home page with API info"""
+    return {
+        'service': 'LinkedIn Image Processor',
+        'status': 'running',
+        'version': '1.0.0',
+        'endpoints': {
+            'POST /process-linkedin-image': 'Process a LinkedIn image URL',
+            'GET /images/<filename>': 'Serve processed images', 
+            'GET /health': 'Health check'
+        },
+        'usage_example': {
+            'url': f'{BASE_URL}/process
