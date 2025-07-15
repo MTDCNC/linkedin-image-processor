@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 LinkedIn Image Processor REST Endpoint
+Updated to handle 1280x720 container constraints
 """
 
 from flask import Flask, request, jsonify, send_file
@@ -16,14 +17,63 @@ app = Flask(__name__)
 UPLOAD_FOLDER = os.environ.get('UPLOAD_FOLDER', 'processed_images')
 MAX_FILE_SIZE = int(os.environ.get('MAX_FILE_SIZE', 2 * 1024 * 1024))  # 2MB
 MIN_WIDTH = int(os.environ.get('MIN_WIDTH', 400))
-MAX_WIDTH = int(os.environ.get('MAX_WIDTH', 1000))
+MAX_CONTAINER_WIDTH = int(os.environ.get('MAX_CONTAINER_WIDTH', 1280))
+MAX_CONTAINER_HEIGHT = int(os.environ.get('MAX_CONTAINER_HEIGHT', 720))
 BASE_URL = os.environ.get('BASE_URL', 'http://localhost:5000')
 
 # Ensure upload folder exists
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
+def calculate_container_fit_dimensions(original_width, original_height, container_width=1280, container_height=720, min_width=400):
+    """
+    Calculate dimensions to fit image within container while maintaining aspect ratio
+    
+    Args:
+        original_width: Original image width
+        original_height: Original image height
+        container_width: Maximum container width (default 1280)
+        container_height: Maximum container height (default 720)
+        min_width: Minimum allowed width (default 400)
+    
+    Returns:
+        tuple: (new_width, new_height)
+    """
+    # Calculate aspect ratio
+    aspect_ratio = original_width / original_height
+    
+    # Calculate dimensions if we fit by width
+    width_constrained_width = container_width
+    width_constrained_height = int(container_width / aspect_ratio)
+    
+    # Calculate dimensions if we fit by height  
+    height_constrained_width = int(container_height * aspect_ratio)
+    height_constrained_height = container_height
+    
+    # Choose the constraint that keeps image within both bounds
+    if width_constrained_height <= container_height:
+        # Width is the limiting factor
+        new_width = width_constrained_width
+        new_height = width_constrained_height
+    else:
+        # Height is the limiting factor
+        new_width = height_constrained_width
+        new_height = height_constrained_height
+    
+    # Ensure minimum width is respected
+    if new_width < min_width:
+        new_width = min_width
+        new_height = int(min_width / aspect_ratio)
+        
+        # If minimum width causes height to exceed container, crop height
+        if new_height > container_height:
+            new_height = container_height
+            # Recalculate width to maintain aspect ratio
+            new_width = int(container_height * aspect_ratio)
+    
+    return new_width, new_height
+
 def process_image(image_data: bytes) -> tuple:
-    """Process image: resize, compress, optimize"""
+    """Process image: resize to fit 1280x720 container, compress, optimize"""
     try:
         img = Image.open(BytesIO(image_data))
         
@@ -31,20 +81,17 @@ def process_image(image_data: bytes) -> tuple:
         if img.mode in ('RGBA', 'LA', 'P'):
             img = img.convert('RGB')
         
-        # Calculate new dimensions
+        # Get original dimensions
         original_width, original_height = img.size
         
-        # Determine new width within constraints
-        if original_width < MIN_WIDTH:
-            new_width = MIN_WIDTH
-        elif original_width > MAX_WIDTH:
-            new_width = MAX_WIDTH
-        else:
-            new_width = original_width
-        
-        # Calculate proportional height
-        aspect_ratio = original_height / original_width
-        new_height = int(new_width * aspect_ratio)
+        # Calculate new dimensions to fit in 1280x720 container
+        new_width, new_height = calculate_container_fit_dimensions(
+            original_width, 
+            original_height,
+            MAX_CONTAINER_WIDTH,
+            MAX_CONTAINER_HEIGHT,
+            MIN_WIDTH
+        )
         
         # Resize image
         img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
@@ -63,12 +110,16 @@ def process_image(image_data: bytes) -> tuple:
                 
             quality -= 10
             
-            # Resize further if still too large
+            # If still too large at minimum quality, resize further
             if quality <= 50 and output.tell() > MAX_FILE_SIZE:
+                # Reduce size by 10% each iteration
                 new_width = int(new_width * 0.9)
                 new_height = int(new_height * 0.9)
+                
+                # Don't go below minimum width
                 if new_width < MIN_WIDTH:
                     break
+                    
                 img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
                 quality = 75
         
@@ -77,10 +128,17 @@ def process_image(image_data: bytes) -> tuple:
     except Exception as e:
         raise Exception(f"Image processing failed: {str(e)}")
 
+
+
 def download_linkedin_image(url: str) -> bytes:
     """Download image from LinkedIn URL"""
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
     }
     
     try:
@@ -103,7 +161,12 @@ def home():
     return {
         'service': 'LinkedIn Image Processor',
         'status': 'running',
-        'version': '1.0.0',
+        'version': '2.0.0',
+        'container_constraints': {
+            'max_width': MAX_CONTAINER_WIDTH,
+            'max_height': MAX_CONTAINER_HEIGHT,
+            'min_width': MIN_WIDTH
+        },
         'endpoints': {
             'POST /process-linkedin-image': 'Process a LinkedIn image URL',
             'GET /images/<filename>': 'Serve processed images', 
@@ -116,7 +179,14 @@ def home():
                 'image_url': 'https://media.licdn.com/dms/image/...',
                 'filename': 'optional-name'
             }
-        }
+        },
+        'notes': [
+            'Images are resized to fit within 1280x720 container while maintaining aspect ratio',
+            'Portrait images (1000x2000) will be max 360x720',
+            'Landscape images (2000x1000) will be max 1280x640',
+            'All images maintain minimum 400px width',
+            'File size kept under 2MB'
+        ]
     }
 
 @app.route('/process-linkedin-image', methods=['POST'])
@@ -141,8 +211,17 @@ def process_linkedin_image():
         original_img = Image.open(BytesIO(image_data))
         original_size = original_img.size
         
+        # Calculate what the final dimensions will be
+        calculated_width, calculated_height = calculate_container_fit_dimensions(
+            original_size[0], 
+            original_size[1],
+            MAX_CONTAINER_WIDTH,
+            MAX_CONTAINER_HEIGHT,
+            MIN_WIDTH
+        )
+        
         # Process the image
-        processed_data, new_width, new_height = process_image(image_data)
+        processed_data, final_width, final_height = process_image(image_data)
         
         # Generate filename
         if custom_filename:
@@ -163,14 +242,25 @@ def process_linkedin_image():
         # Build public URL
         public_url = f"{BASE_URL}/images/{filename}"
         
+        # Determine fit type for debugging
+        aspect_ratio = original_size[0] / original_size[1]
+        container_aspect = MAX_CONTAINER_WIDTH / MAX_CONTAINER_HEIGHT
+        fit_type = "width-constrained" if aspect_ratio > container_aspect else "height-constrained"
+        
         return jsonify({
             'success': True,
             'processed_url': public_url,
             'local_path': file_path,
             'original_size': original_size,
-            'processed_size': [new_width, new_height],
+            'processed_size': [final_width, final_height],
             'file_size': file_size,
-            'filename': filename
+            'filename': filename,
+            'container_info': {
+                'max_container': [MAX_CONTAINER_WIDTH, MAX_CONTAINER_HEIGHT],
+                'fit_type': fit_type,
+                'aspect_ratio': round(aspect_ratio, 2),
+                'container_aspect': round(container_aspect, 2)
+            }
         })
         
     except Exception as e:
@@ -198,13 +288,14 @@ def health_check():
         'status': 'healthy',
         'upload_folder': UPLOAD_FOLDER,
         'max_file_size': MAX_FILE_SIZE,
-        'image_constraints': {
-            'min_width': MIN_WIDTH,
-            'max_width': MAX_WIDTH
+        'container_constraints': {
+            'max_width': MAX_CONTAINER_WIDTH,
+            'max_height': MAX_CONTAINER_HEIGHT,
+            'min_width': MIN_WIDTH
         },
         'base_url': BASE_URL
     })
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
+    app.run(host='0.0.0.0', port=port, debug=True)
