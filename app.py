@@ -221,6 +221,14 @@ def download_linkedin_image(url: str) -> bytes:
         )
         raise Exception(f"Failed to download image: {str(e)}")
 
+@app.route("/health", methods=["GET"])
+def health_check():
+    return {
+        "status": "ok",
+        "service": "linkedin-image-processor",
+        "timestamp": datetime.utcnow().isoformat() + "Z"
+    }, 200
+
 
 @app.route('/')
 def home():
