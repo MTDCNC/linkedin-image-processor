@@ -8,7 +8,7 @@ Includes:
 - Verbose logging around network + processing steps
 - /debug-fetch-url endpoint to test remote image URLs
 """
-
+from datetime import datetime
 from flask import Flask, request, jsonify, send_file
 from PIL import Image
 import requests
